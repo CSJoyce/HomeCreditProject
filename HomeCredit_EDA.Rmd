@@ -1,0 +1,157 @@
+---
+title: "Home Credit EDA"
+author: "Chris Joyce"
+date: "10/2/24"
+output: 
+  html_document:
+    number_sections: true
+    toc: true
+    toc_depth: 2
+editor_options:
+  chunk_output_type: inline
+---
+
+# Statement of Objectives
+
+### We aim to identify new customers for Home Credit on the basis of their loan repayment abilities.  Using historical data, we have represented payment issues as a yes/no target variable along with a multitude of other descriptive columns containing customer data.  This data will be modeled to identify those variables which are most strongly associated with our target variable, from which a predictive model will be made with the goal of accurately identifying which new customers may or may not struggle to pay their loan.  Post-EDA details included at end of notebook.
+
+
+# Pre-EDA Questions
+
+### What is a realistically viable number of customers for doing analysis?  Will this data have that amount?  On what basis should I keep/discard predictor variables? What is the best way to deal with the NAs I'll encounter? How can I judge if outliers should be kept or removed?   What can I do to preserve variability but remove impractical variables? 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = TRUE)
+
+library(tidyverse)
+library(dplyr)
+library(skimr)
+library(janitor)
+library(tableone)
+library(glmnet)
+hc_train <- read.csv("application_train.csv", stringsAsFactors = TRUE)
+hc_test <- read.csv("application_test.csv", stringsAsFactors = TRUE)
+```
+
+
+# Structures and Balance
+```{r}
+#str(hc_train)
+#summary(hc_train)
+#head(hc_train, 5)
+nrow(hc_train)
+```
+```{r}
+#str(hc_test)
+nrow(hc_test)
+#summary(hc_test)
+```
+```{r}
+#hc_train_num <- hc_train |>
+  #select_if(is.numeric)
+#col_names = colnames(hc_train)
+```
+
+```{r}
+get_dupes(hc_train, SK_ID_CURR) #check for duplicate customer entries
+get_dupes(hc_test, SK_ID_CURR)
+```
+```{r}
+skim(hc_train)
+```
+```{r}
+skim(hc_test)
+```
+```{r}
+hc_train <- hc_train |>
+  filter(DAYS_EMPLOYED < 0) #contains outliers and positive values when all values should be negative
+```
+
+### For the sake of readability, summary/structure lines have been commented out.  This data has a lot of variability and NAs, and columns that may not be relevant for our use case. Some missing values would heavily reduce the size of this dataset if removed, such as client car age of which 2/3 of entries are missing this variable.  Most of the columns are normalized scores or values for building or housing measurements, and these appear to also be full of missing values.  These issues span across both testing and training data. Perhaps we will omit some columns with regard to the data dictionary.
+
+
+```{r}
+variables <- c("NAME_CONTRACT_TYPE", "CODE_GENDER", "AMT_CREDIT")  #observe balance of target variable, amongst a few other variables of interest
+groups = "TARGET"
+bal_table <- CreateTableOne(vars = variables, strata = groups, data = hc_train)
+bal_table
+```
+
+
+
+### This balance table shows us that a significant amount of the customers do not fall under the target variable for payment issues.  In the training data, about 12.3% of customers are in the payment issue group.    Thus, a simple majority-based classifier would correctly predict "no" for a new customer's target variable 87.7% of the time. 
+
+
+# Regression
+
+```{r}
+hc_train_log <- hc_train |>
+  select(-starts_with("FLAG"))     #removing single value columns affecting regression
+colnames(hc_train_log) <- tolower(colnames(hc_train_log))
+```
+
+```{r}
+target_log <- glm(target ~ ., data = hc_train_log,  family = "binomial")
+summary(target_log)
+```
+### Our most statistically significant predictor variables for the target variable seemed to be those related to personal finance data (amt_income_total, amt_annuity, amt_goods_price), as well as the client region and city rating, client age, and years employed.  Other significant variables were those associated with an external data source, so no meaning can be derived from them.  Note that this regression has gutted all rows containing NAs. This drastically reduced the dataset size from 307,611 rows to 11,351, something to consider for training our models. 
+### This reveals to me an important consideration.  Why sacrifice 96% of our data just to be able to run this regression? Most of the variables missing NA values are not relevant for solving our business problem.  Instead, they have something to do with specific details, calculations, and normalized scores relating to the client's place of residence, which is rather strange.  Let's focus on making a usable dataframe with practical data.
+
+
+# Further Cleaning
+
+```{r}
+rm_cols <- function(data, threshold) {
+  data %>% select_if(function(col) sum(is.na(col)) <= threshold)
+}
+```
+
+```{r}
+hc_train_clean <- hc_train |>
+  select(-starts_with("FLAG"))
+
+hc_test_clean <- hc_test |>
+  select(-starts_with("FLAG"))
+
+colnames(hc_train_clean) <- tolower(colnames(hc_train_clean))
+colnames(hc_test_clean) <- tolower(colnames(hc_test_clean))
+
+hc_train_clean <- rm_cols(hc_train_clean, 8000)
+hc_test_clean <- rm_cols(hc_test_clean, 8000)
+
+```
+
+### We have kept all other predictor variables with fewer NAs to be used in logistic regression.  This is for the sake of predictive modeling, which benefits from using many unique values.  For other models, we may consider imputing the influential variables with fewer NAs.  For now, let's see how our regression performs with this cleaned data.
+
+```{r}
+target_log_clean <- glm(target ~ ., data = hc_train_clean,  family = "binomial")
+summary(target_log_clean)
+```
+
+### We have preserved an astounding 239,165 records just from removing the problematic columns.  Now we have more insights into significant predictor variables as we have much more data.
+
+
+# Join
+
+```{r}
+bur <- read.csv("bureau.csv", stringsAsFactors = TRUE)
+```
+```{r}
+head(bur,10)
+colnames(bur) <- tolower(colnames(bur))
+```
+```{r}
+combi <- merge(hc_train_clean, bur, by = "sk_id_curr", all = TRUE)
+```
+```{r}
+combi_log <- glm(target ~ ., data = combi,  family = "binomial")
+summary(combi_log)
+```
+
+### We combine the credit bureau dataset with our customer data.  32,610 rows are kept in this merged dataset.  A few of the additional columns could be viable as predictor variables, but most are not.  We will have to further explore these variables and decide on which will be helpful depending on the use case.
+
+
+# Results
+
+### Exploration of the Home Credit customer data revealed many different variable instances at our disposal.  Upon analysis, we found that many variables used for prediction were hampered by the proportion of NAs they contained.  The tradeoff for removing these variables was a better performing regression model as more data instances could be used.  This also applies for other models using this data.  Balance of the target variable was checked, as well as duplicate row entries.  Significant predictor variables included age, total time working, and marriage status among others.  Overall, there are still remaining NA values in our cleaned data that may need to be imputed or removed depending on the analytical use.  For our logistic regression purposes, rows were already removed, but it would be nice to minimize wasted data.  Other functions and models will require different treatment of the data we ended up with. 
