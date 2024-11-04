@@ -1,0 +1,255 @@
+---
+title: "Modling2"
+author: "Tommaso Pascucci"
+date: "2024-11-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r Load data}
+pacman::p_load(tidyverse, dplyr, caret, pROC, xgboost, Matrix)
+
+set.seed(123)  # Set seed for reproducibility
+
+PracticeProjectImputed <- read.csv("PracticeProjectImputed.csv", stringsAsFactors = TRUE)
+
+application_train <- read.csv("application_train.csv", stringsAsFactors = TRUE) 
+application_test <- read.csv("application_test.csv", stringsAsFactors = TRUE) 
+
+summary(PracticeProjectImputed)
+
+```
+
+
+# Majority
+```{r Split data, echo=FALSE}
+
+# Calculate counts of each class
+target_counts <- PracticeProjectImputed %>%
+  group_by(TARGET) %>%
+  summarise(Count = n())
+
+# Calculate percentages
+target_percentages <- target_counts %>%
+  mutate(Percentage = (Count / sum(Count)) * 100)
+
+# Print the results
+print(target_percentages)
+```
+
+# Train/ validate
+```{r Split data, echo=FALSE}
+
+trainIndex <- createDataPartition(PracticeProjectImputed$TARGET, p = 0.8, list = FALSE, times = 1)
+trainData <- PracticeProjectImputed[trainIndex, ]
+testData <- PracticeProjectImputed[-trainIndex, ]
+
+```
+
+# logistic regression
+
+Accuracy is the same as the majority class
+
+```{r Logistic regression, echo=FALSE}
+
+# Fit the logistic regression model
+# Make sure TARGET is a factor for classification
+#trainData$TARGET <- as.factor(trainData$TARGET)
+model <- glm(TARGET ~ ., data = trainData, family = binomial)
+
+summary(model)
+
+# Predict probabilities on the test data
+probabilities <- predict(model, newdata = testData, type = "response")
+
+# Predict class labels using a threshold of 0.5
+predicted_classes <- ifelse(probabilities > 0.5, 1, 0)
+
+# Create confusion matrix
+confusion <- table(Predicted = predicted_classes, Actual = testData$TARGET)
+print("Confusion Matrix:")
+print(confusion)
+
+# Calculate accuracy
+accuracy <- sum(diag(confusion)) / sum(confusion)
+print(paste("Accuracy:", round(accuracy, 4)))
+
+# Calculate Recall
+recall <- confusion[2, 2] / (confusion[2, 2] + confusion[2, 1])
+print(paste("Recall:", round(recall, 4)))
+
+# Calculate Precision
+precision <- confusion[2, 2] / (confusion[2, 2] + confusion[1, 2])
+print(paste("Precision:", round(precision, 4)))
+
+# Calculate F1 Score
+f1_score <- 2 * ((precision * recall) / (precision + recall))
+print(paste("F1 Score:", round(f1_score, 4)))
+
+testData$TARGET <- as.numeric(as.character(testData$TARGET))
+# Remove observations with missing values in probabilities or TARGET
+complete_cases <- complete.cases(probabilities, testData$TARGET)
+probabilities <- probabilities[complete_cases]
+testData$TARGET <- testData$TARGET[complete_cases]
+# Calculate AUC
+roc_obj <- roc(testData$TARGET, probabilities)
+auc_value <- auc(roc_obj)
+print(paste("AUC:", round(auc_value, 4)))
+
+
+```
+
+# XGBoost
+Slightly higher accuracy the the majority class
+AUC was essenatly the same as with the logitic regression
+
+```{r XGBOOST, echo=FALSE}
+
+# Split data into features and target
+target <- PracticeProjectImputed$TARGET
+
+# Split data into training and testing sets (80% train, 20% test)
+trainIndex <- createDataPartition(target, p = 0.8, list = FALSE)
+trainData <- PracticeProjectImputed[trainIndex, ]
+testData  <- PracticeProjectImputed[-trainIndex, ]
+
+# Separate labels
+train_label <- trainData$TARGET
+trainData$TARGET <- NULL
+
+test_label <- testData$TARGET
+testData$TARGET <- NULL
+
+# Convert character columns to factors
+char_cols <- sapply(trainData, is.character)
+trainData[char_cols] <- lapply(trainData[char_cols], as.factor)
+testData[char_cols] <- lapply(testData[char_cols], as.factor)
+
+# Create model matrices (one-hot encoding for categorical variables)
+formula <- as.formula("~ . -1")  # -1 removes the intercept
+train_matrix <- sparse.model.matrix(formula, data = trainData)
+test_matrix <- sparse.model.matrix(formula, data = testData)
+
+# Create DMatrix objects for XGBoost
+dtrain <- xgb.DMatrix(data = train_matrix, label = train_label)
+dtest <- xgb.DMatrix(data = test_matrix, label = test_label)
+
+# Set XGBoost parameters
+params <- list(
+  booster = "gbtree",
+  objective = "binary:logistic",
+  eval_metric = "auc"
+)
+
+# Perform cross-validation to find the optimal number of boosting rounds
+cv_model <- xgb.cv(
+  params = params,
+  data = dtrain,
+  nrounds = 100,
+  nfold = 5,
+  metrics = "auc",
+  stratified = TRUE,
+  early_stopping_rounds = 10,
+  verbose = TRUE
+)
+
+best_nrounds <- cv_model$best_iteration
+
+# Train the final model using the optimal number of rounds
+bst_model <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = best_nrounds,
+  watchlist = list(train = dtrain, eval = dtest),
+  early_stopping_rounds = 10,
+  verbose = TRUE
+)
+
+# Make predictions on the test set
+preds <- predict(bst_model, dtest)
+
+# Convert probabilities to binary class labels
+pred_labels <- ifelse(preds > 0.5, 1, 0)
+
+# Evaluate model performance using confusion matrix
+conf_mat <- confusionMatrix(factor(pred_labels), factor(test_label))
+print(conf_mat)
+
+# Extract recall, precision, and F1 score
+precision <- conf_mat$byClass["Pos Pred Value"]
+recall <- conf_mat$byClass["Sensitivity"]
+f1_score <- 2 * ((precision * recall) / (precision + recall))
+
+cat("Precision:", round(precision, 4), "\n")
+cat("Recall:", round(recall, 4), "\n")
+cat("F1 Score:", round(f1_score, 4), "\n")
+
+
+# Compute ROC and AUC
+roc_obj <- roc(test_label, preds)
+auc_value <- auc(roc_obj)
+cat("AUC:", auc_value, "\n")
+
+# Plot ROC curve
+plot(roc_obj, main = paste0("ROC Curve (AUC = ", round(auc_value, 4), ")"))
+
+```
+
+
+
+
+
+```{r Logistic regression over sampling, echo=FALSE}
+
+# Fit the logistic regression model
+# Make sure TARGET is a factor for classification
+#trainData$TARGET <- as.factor(trainData$TARGET)
+
+library(ROSE) # For resampling
+# Oversample the minority class
+# Count the number of samples in each class
+majority_count <- sum(trainData$TARGET == 0)
+minority_count <- sum(trainData$TARGET == 1)
+
+# Oversample the minority class to match the majority class size
+oversampled_data <- ovun.sample(TARGET ~ ., data = trainData, method = "over", N = majority_count * 2)$data
+model2 <- glm(TARGET ~ ., data = oversampled_data, family = binomial)
+
+summary(model2)
+
+# Predict probabilities on the test data
+probabilities <- predict(model2, newdata = testData, type = "response")
+
+# Predict class labels using a threshold of 0.5
+predicted_classes <- ifelse(probabilities > 0.5, 1, 0)
+
+# Create confusion matrix
+confusion <- table(Predicted = predicted_classes, Actual = testData$TARGET)
+print("Confusion Matrix:")
+print(confusion)
+
+# Calculate accuracy
+accuracy <- sum(diag(confusion)) / sum(confusion)
+print(paste("Accuracy:", round(accuracy, 4)))
+
+testData$TARGET <- as.numeric(as.character(testData$TARGET))
+# Remove observations with missing values in probabilities or TARGET
+complete_cases <- complete.cases(probabilities, testData$TARGET)
+probabilities <- probabilities[complete_cases]
+testData$TARGET <- testData$TARGET[complete_cases]
+# Calculate AUC
+roc_obj <- roc(testData$TARGET, probabilities)
+auc_value <- auc(roc_obj)
+print(paste("AUC:", round(auc_value, 4)))
+
+
+```
