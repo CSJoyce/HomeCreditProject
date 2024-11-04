@@ -1,18 +1,24 @@
 ---
-title: "Modeling Assignment"
+title: "Home Credit Modeling Assignment"
 author: "Nick Goshev, Chris Joyce, Tommaso Pascucci"
 date: "`r Sys.Date()`"
 output: 
   html_document:
-    number_sections: yes
+    number_sections: false
     toc: yes
+    toc_depth: 1
 editor_options: 
   chunk_output_type: inline
 ---
-# setup
+
+# Statement of Business and Analytical Tasks
+
+#### Home Credit faces an issue wherein most of its customers are individuals who have little to no established line of credit.  Thus, it is difficult for the company to evaluate potential new customers based on their ability to repay loans taken out through Home Credit, and the company cannot determine the default risk of potential borrowers.  The analytical task at hand is to construct a predictive model in order to predict whether or not a new customer is at high risk for defaulting.  The outcome is thus a binary variable of two classes: 0 for low risk borrowers, and 1 for high risk borrowers.  This predictive model will utilize a supervised approach, in which past financial data that includes the target variable will be used to train the model.  The performance of each model will be evaluated based on its respective prediction accuracy compared to a majority classifier.
+
+# Setup and Data Preparation
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = TRUE)
 library(readxl)
 library(tidyverse)
 library(C50)
@@ -31,106 +37,108 @@ library(randomForest)
 library(xgboost)
 library(pROC)
 library(Matrix)
-
-
-
-
-
-```
-# Data preparation
-
-```{r}
-df <- read.csv("application_train.csv",stringsAsFactors = TRUE)
-head(df)
-df <- df[,-1]
+library(dplyr)
 ```
 
-## chi2 testing to remove variables with low association with target
+## Since we have already performed data cleaning and transformation prior to modeling, we comment out the following preparation steps but leave them so as to explain the reasoning behind each step.
+
 ```{r}
+#df <- read.csv("application_train.csv",stringsAsFactors = TRUE)
+#head(df)
+#df <- df[,-1]
+```
 
-to_remove <- c()
+```{r}
+# Chi^2 testing to remove variables with low association with target
 
-for(index in c(2:121)){
+#to_remove <- c()
+
+#for(index in c(2:121)){
   
-contingency_table <- table(df[,1], df[,index])
+#contingency_table <- table(df[,1], df[,index])
   
-chi_test <- chisq.test(contingency_table)
+#chi_test <- chisq.test(contingency_table)
 
-  if(chi_test$p.value > 0.01){
-    to_remove <- c(to_remove, index)
-  }
-}
+  #if(chi_test$p.value > 0.01){
+    #to_remove <- c(to_remove, index)
+  #}
+#}
 
-df_filtered <- df[,-to_remove]
+#df_filtered <- df[,-to_remove]
 ```
 
-
-## examining null data and removing columns with extremely high null percentages 
-
 ```{r}
-total <- colSums(is.na(df_filtered))
+# Examining null data and removing columns with extremely high null percentages
+
+#total <- colSums(is.na(df_filtered))
 
 # Calculate the percentage of missing values for each column
-percent <- (colSums(is.na(df_filtered)) / nrow(df_filtered)) * 100
+
+#percent <- (colSums(is.na(df_filtered)) / nrow(df_filtered)) * 100
 
 # Combine total and percent into a data frame
-missing_application_train_data <- data.frame(Total = total,Percent = percent)
 
+#missing_application_train_data <- data.frame(Total = total,Percent = percent)
 
-missing_application_train_data <- missing_application_train_data[order(-missing_application_train_data$Total), ]
+#missing_application_train_data <- missing_application_train_data[order(-missing_application_train_data$Total), ]
 
-print(missing_application_train_data)
+#print(missing_application_train_data)
 
-kept <- missing_application_train_data %>% filter(Percent < 20) %>% select() %>% labels()
+#kept <- missing_application_train_data %>% filter(Percent < 20) %>% select() %>% labels()
 
-kept <- unlist(kept[[1]])
+#kept <- unlist(kept[[1]])
 
-df_filtered <- df[,kept] %>% mutate(TARGET=df$TARGET)
+#df_filtered <- df[,kept] %>% mutate(TARGET=df$TARGET)
 ```
 
-## factoring binary columns
+
 ```{r}
-df_filtered %>% summary()
+# Factoring binary columns
+
+#df_filtered %>% summary()
 
 
-unique_counts <- sort(lengths(lapply(df_filtered, unique)))
-binary_columns <- names(unique_counts[unique_counts==2])
+#unique_counts <- sort(lengths(lapply(df_filtered, unique)))
+#binary_columns <- names(unique_counts[unique_counts==2])
 
-df_filtered[binary_columns] <- lapply(df_filtered[binary_columns], factor)
+#df_filtered[binary_columns] <- lapply(df_filtered[binary_columns], factor)
 ```
 
-## removing columns with extremely high correlations amongst each other
 ```{r}
-corr_matrix <- cor(df_filtered %>% select(where(is.numeric)), use = "pairwise.complete.obs")
+# Removing columns with extremely high correlations amongst each other
 
-high_corr <- findCorrelation(corr_matrix, cutoff = 0.95)
+#corr_matrix <- cor(df_filtered %>% select(where(is.numeric)), use = "pairwise.complete.obs")
 
-df_filtered <- df_filtered[,-high_corr]
+#high_corr <- findCorrelation(corr_matrix, cutoff = 0.95)
+
+#df_filtered <- df_filtered[,-high_corr]
 ```
 
-## imputing the missing data for the remaining columns using multiple imputation
 ```{r}
-library(mice)
+# Imputing the missing data for the remaining columns using multiple imputation
 
-imputed_data <- mice(df_filtered, m = 5, maxit = 5, seed = 500, ridge = 0.1)
+#library(mice)
 
-df_imputed <- complete(imputed_data)
+#imputed_data <- mice(df_filtered, m = 5, maxit = 5, seed = 500, ridge = 0.1)
 
-sum(is.na(df_imputed))
+#df_imputed <- complete(imputed_data)
+
+#sum(is.na(df_imputed))
 
 ```
 
 
-
-# modeling
+# Modeling
 
 ```{r}
 df <- read.csv("PracticeProjectImputed.csv",stringsAsFactors = TRUE)
 df$TARGET <- df$TARGET %>% factor()
 df %>% head()
 ```
-### train/test split
+
 ```{r}
+# Train/test split
+
 set.seed(100)
 inTrain <- createDataPartition(df$TARGET, p=0.7, list=FALSE)
 
@@ -140,95 +148,112 @@ df_test <- df[-inTrain,]
 ```
 
 ## Random Forest
-col 38 is being excluded here due to having 58 levels, random forest does not work with categorical variables over 53 unique levels.
-### default
-```{r}
 
-rf_default <- randomForest(TARGET ~ ., data = df_train[,-38])
+```{r}
+# Default
+
+rf_default <- randomForest(TARGET ~ ., data = df_train[,-38]) 
 
 predictions_train <- predict(rf_default,df_train)
 predictions_test <- predict(rf_default,df_test)
 
 ```
 
-```{r}
+#### Column 38 is being excluded here due to having 58 levels, random forest does not work with categorical variables over 53 unique levels.
 
+```{r}
 mmetric(df_train$TARGET, predictions_train, metric=c("ACC","TPR","PRECISION","F1"))
 
 mmetric(df_test$TARGET, predictions_test, metric=c("ACC","TPR","PRECISION","F1"))
 ```
-although the performance was relatively good on the train set the default model is grossly overfit, and not likely to generalize well. We should adjust hyperparameters to attempt to reconcile this gap between the train and test performance. Also the true positive rate for class 2 is alarmingly low in this case.
-### larger terminal nodes
+
+#### Although the performance was relatively good on the train set the default model is grossly overfitted, and not likely to generalize well. We should adjust hyperparameters to attempt to reconcile this gap between the train and test performance. Also the true positive rate for class 2 is alarmingly low in this case.
+
 ```{r}
-rf_bignodes <- randomForest(TARGET ~ ., data = df_train, nodesize=200)
+# Larger terminal nodes
+
+rf_bignodes <- randomForest(TARGET ~ ., data = df_train[,-38], nodesize=200)
 predictions_train <- predict(rf_bignodes,df_train)
 predictions_test <- predict(rf_bignodes,df_test)
 ```
-these adjustments were done to attempt to reduce overfitting of the model by ensuring a large number of observations in each node.
-```{r}
 
+#### These adjustments were done to attempt to reduce overfitting of the model by ensuring a large number of observations in each node.
+
+```{r}
 mmetric(df_train$TARGET, predictions_train, metric=c("ACC","TPR","PRECISION","F1"))
 
 mmetric(df_test$TARGET, predictions_test, metric=c("ACC","TPR","PRECISION","F1"))
 ```
-very similar performance on test set, but slightly lowered on train, the accuracy for train and test was extremely similar which indicates that the model generalizes well. However it appears to be guessing as a majority classifier, which is not very beneficial, we want to be able to capture observations from both classes.
 
-#### changed thresholds with big nodesize
+#### The test set has very similar performance, but performance is slightly lower on train. The accuracy for train and test was extremely similar, which indicates that the model generalizes well. However, it appears to be guessing as a majority classifier, which is not very beneficial. We want to be able to capture observations from both classes.
+
 ```{r}
+# Changed thresholds with big nodesize
+
 rf_bignodes <- randomForest(TARGET ~ ., data = df_train[,-38], nodesize=200, cutoff=c(0.92,0.08) )
 predictions_train <- predict(rf_bignodes,df_train)
 predictions_test <- predict(rf_bignodes,df_test)
 ```
-the threshhold was changed to 0.08 as that is very close to the proportion of observations that are class 2, we want to retain the high nodesize to increase the probability of capturing class 2 as it is very rare. At a threshold of 0.8 that indicates that if the node has class 2 at a higher rate than average it may be at risk and should be classified as such in an attempt to increase true positive rate of class 2.
+
+#### The threshhold was changed to 0.08 as that is very close to the proportion of observations that are class 2, we want to retain the high nodesize to increase the probability of capturing class 2 as it is very rare. At a threshold of 0.8 that indicates that if the node has class 2 at a higher rate than average it may be at risk and should be classified as such in an attempt to increase true positive rate of class 2.
 
 ```{r}
-
 mmetric(df_train$TARGET, predictions_train, metric=c("ACC","TPR","PRECISION","F1"))
 
 mmetric(df_test$TARGET, predictions_test, metric=c("ACC","TPR","PRECISION","F1"))
 ```
-The accuracy for the train set and test set is much closer than that of the default tree while still remaining competitive with the testing default. This parameter adjustment had the added benefit of having a much higher tpr for class 2 but it is still very low at 6.4%.
 
-### Lowering tree depth
+#### The accuracy for the train set and test set is much closer than that of the default tree while still remaining competitive with the testing default. This parameter adjustment had the added benefit of having a much higher tpr for class 2 but it is still very low at 6.4%.
+
 ```{r}
+# Lowering tree depth
+
 rf_bignodes <- randomForest(TARGET ~ ., data = df_train[,-38], maxnodes=50)
 predictions_train <- predict(rf_bignodes,df_train)
 predictions_test <- predict(rf_bignodes,df_test)
 ```
-Another way to attempt to address the overfitting is by lowering the depth of the trees. Ideally this will also result in a better true positive rate than the increased node size as well.
+
+#### Another way to attempt to address the overfitting is by lowering the depth of the trees. Ideally this will also result in a better true positive rate than the increased node size as well.
+
 ```{r}
 
 mmetric(df_train$TARGET, predictions_train, metric=c("ACC","TPR","PRECISION","F1"))
 
 mmetric(df_test$TARGET, predictions_test, metric=c("ACC","TPR","PRECISION","F1"))
 ```
-Similarly to the original larger noded model this is essentially acting as a majority classifier, I will try adding the thresholding here as well to see if I can increase the TPR2.
 
-#### lowering threshold for class 2
+#### Similarly to the original larger noded model this is essentially acting as a majority classifier, I will try adding the thresholding here as well to see if I can increase the TPR2.
 
 ```{r}
+# Lowering threshold for class 2
+
 rf_bignodes <- randomForest(TARGET ~ ., data = df_train[,-38], maxnodes=50, cutoff=c(0.92,0.08) )
 predictions_train <- predict(rf_bignodes,df_train)
 predictions_test <- predict(rf_bignodes,df_test)
 ```
 
 ```{r}
-
 mmetric(df_train$TARGET, predictions_train, metric=c("ACC","TPR","PRECISION","F1"))
 
 mmetric(df_test$TARGET, predictions_test, metric=c("ACC","TPR","PRECISION","F1"))
 ```
-Even with implementing such drastic thresholds this iteration of the model is still classifying as a majority classifier, I believe the way to rectify this would be to increase the maxnodes count.
 
-### observations
-I believe the big node forest with thresholding is the best way so far for predicting. The accuracy rates are close to the majority classifier, which is already at a very high >90%, while also sporting the highest true positive rate for class 2 by a large margin. In future tests I plan to experiment with reducing features per tree and adding weighting as the next steps to reduce overfitting and to increase TPR2
-#### variable importance within rf
+#### Even with implementing such drastic thresholds this iteration of the model is still classifying as a majority classifier, I believe the way to rectify this would be to increase the maxnodes count.
+
+## Observations
+
+#### I believe the big node forest with thresholding is the best way so far for predicting. The accuracy rates are close to the majority classifier, which is already at a very high >90%, while also sporting the highest true positive rate for class 2 by a large margin. In future tests I plan to experiment with reducing features per tree and adding weighting as the next steps to reduce overfitting and to increase TPR2
+
 ```{r}
+# Variable importance within rf
+
 varImp(rf_default)
 ```
-it looks like the most important variables by a large margin are the external source normalization scores which refer to risk of the observation.
 
-# Train/ test 2
+#### It looks like the most important variables by a large margin are the external source normalization scores which refer to risk of the observation.
+
+## Re-Partitioning
+
 ```{r Split data, echo=FALSE}
 
 trainIndex <- createDataPartition(df$TARGET, p = 0.8, list = FALSE, times = 1)
@@ -239,7 +264,6 @@ testData <- df[-trainIndex, ]
 
 ## Logistic Regression
 
-the logistic regression didnt seem to have any improvement over the majority classifier
 ```{r}
 model <- glm(TARGET ~ ., data = trainData, family = binomial)
 
@@ -318,10 +342,11 @@ train_auc <- auc(roc_obj_train)
 print(paste("Train AUC:", round(train_auc, 4)))
 ```
 
+#### The logistic regression didnt seem to have any improvement over the majority classifier.
+
 
 ## XGBoost
 
-This still follows quite closely the majority classier as the accuraty was essentially the same though based on the AUC and F1 score this was an improvment over the logistic regression.
 ```{r}
 # Split data into features and target
 #target <- PracticeProjectImputed$TARGET
@@ -448,4 +473,97 @@ cat("AUC:", round(train_auc, 4), "\n")
 plot(roc_obj_train, main = paste0("Train ROC Curve (AUC = ", round(train_auc, 4), ")"))
 
 ```
+
+#### This still follows quite closely the majority classier as the accuraty was essentially the same though based on the AUC and F1 score this was an improvment over the logistic regression.
+
+# Naive Bayes
+
+```{r}
+# Default model
+
+nb_df <- naiveBayes(TARGET ~ .,data = df_train)
+```
+
+```{r}
+nb_df_train_predictions <- predict(nb_df,df_train)
+nb_df_test_predictions <- predict(nb_df,df_test)
+```
+
+```{r}
+mmetric(df_train$TARGET, nb_df_train_predictions, metric=c("ACC","F1","TPR"))
+mmetric(df_test$TARGET, nb_df_test_predictions, metric=c("ACC","F1","TPR"))
+```
+
+```{r}
+# Adjusted model after removing document variables
+
+nb_df2 <- naiveBayes(TARGET ~ EXT_SOURCE_3 + AMT_REQ_CREDIT_BUREAU_MON + AMT_REQ_CREDIT_BUREAU_QRT + AMT_REQ_CREDIT_BUREAU_YEAR + OBS_30_CNT_SOCIAL_CIRCLE + DEF_30_CNT_SOCIAL_CIRCLE + DEF_60_CNT_SOCIAL_CIRCLE + EXT_SOURCE_2 + AMT_ANNUITY + CNT_FAM_MEMBERS + DAYS_LAST_PHONE_CHANGE + NAME_CONTRACT_TYPE + CODE_GENDER + FLAG_OWN_CAR + FLAG_OWN_REALTY + AMT_CREDIT + NAME_TYPE_SUITE + NAME_INCOME_TYPE + NAME_EDUCATION_TYPE + NAME_FAMILY_STATUS + NAME_HOUSING_TYPE + REGION_POPULATION_RELATIVE + DAYS_BIRTH + DAYS_ID_PUBLISH + FLAG_EMP_PHONE + FLAG_WORK_PHONE + FLAG_PHONE + OCCUPATION_TYPE + REGION_RATING_CLIENT + REGION_RATING_CLIENT_W_CITY + HOUR_APPR_PROCESS_START + REG_REGION_NOT_LIVE_REGION + REG_REGION_NOT_WORK_REGION + REG_CITY_NOT_LIVE_CITY + REG_CITY_NOT_WORK_CITY + LIVE_CITY_NOT_WORK_CITY + ORGANIZATION_TYPE + FONDKAPREMONT_MODE + HOUSETYPE_MODE + WALLSMATERIAL_MODE + EMERGENCYSTATE_MODE, data = df_train)
+```
+
+```{r}
+nb_df2_train_predictions <- predict(nb_df2,df_train)
+nb_df2_test_predictions <- predict(nb_df2,df_test)
+```
+
+```{r}
+mmetric(df_train$TARGET, nb_df2_train_predictions, metric=c("ACC","F1","TPR"))
+mmetric(df_test$TARGET, nb_df2_test_predictions, metric=c("ACC","F1","TPR"))
+```
+
+### Two different Naive Bayes models are used for the Home Credit data.  The first utilizes all available predictor variables, and results in an accuracy of 65%.  The second uses all predictor variables except for document variables, and results in an accuracy of 82%, which still underperforms the majority based classifier.
+
+
+# Cross Validation
+
+```{r}
+cv_function <- function(df, target, nFolds, seedVal, classification, metrics_list)
+{
+
+  set.seed(seedVal)
+  folds = createFolds(df[,target],nFolds)
+  # folds
+ 
+ cv_results <- lapply(folds, function(x)
+ { 
+   train <- df[-x,-target]
+   test  <- df[x,-target]
+   
+   train_target <- df[-x,target]
+   test_target <- df[x,target]
+   
+   classification_model <- classification(train,train_target) 
+   
+   pred <- predict(classification_model,test)
+   
+   return(mmetric(test_target,pred,metrics_list))
+ })
+ 
+ cv_results_m <- as.matrix(as.data.frame(cv_results))
+
+ cv_mean<- as.matrix(rowMeans(cv_results_m))
+ 
+ colnames(cv_mean) <- "Mean"
+ 
+ cv_sd <- as.matrix(rowSds(cv_results_m))
+ 
+ colnames(cv_sd) <- "Sd"
+ 
+ cv_all <- cbind(cv_results_m, cv_mean, cv_sd)
+ 
+ kable(cv_all,digits=2)
+}
+```
+
+```{r}
+metrics_list <- c("ACC","F1","TPR")
+
+cv_function(metrics_list =  metrics_list, df = df_train, target = 12, nFolds = 5, seed = 22, classification =  naiveBayes)
+cv_function(metrics_list =  metrics_list, df = df_train, target = 12, nFolds = 10, seed = 22, classification =  naiveBayes)
+```
+
+# Results
+
+#### Out of the models we used in this project, we found that the adjusted random forest model utilizing larger observation node sizes and a narrower tree cutoff threshold resulted in the highest accuracy of ~92.7%.  The results of the XGBoost model were nearly identical in terms of accuracy, at ~92%.  These were essentially the only models that showed a measurable improvement over the majority based classifier accuracy of 91%.  It is evident that the class imbalance of the target variable is inherently affecting the performance of our models, as the positive class is certainly in the minority of this dataset.  Our selected models are a small range of methods available to address the business problem and analytical task at hand.  Going forward, it would be beneficial to perform additional exploratory data analysis to find underlying patterns in this large dataset.  As such, we could utilize a more specialized model that is more efficient for this task.  In general, our models performed well with regard to proper fitment and generalizability.
+
+
 
