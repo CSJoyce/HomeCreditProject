@@ -1,0 +1,122 @@
+---
+title: "HomeCredit LightGBM"
+author: "Chris Joyce"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: false
+    toc: true
+    toc_depth: 2
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(lightgbm)
+library(caret)
+library(rminer)
+library(knitr)
+library(rpart)
+library(matrixStats)
+```
+
+# Setup
+
+```{r}
+df <- read.csv("PracticeProjectImputed.csv",stringsAsFactors = TRUE)
+```
+
+```{r}
+#str(df)
+```
+
+```{r}
+df$TARGET <- as.numeric(df$TARGET)
+df$NAME_CONTRACT_TYPE <- as.numeric(df$NAME_CONTRACT_TYPE)
+df$CODE_GENDER <- as.numeric(df$CODE_GENDER)
+df$FLAG_OWN_CAR <- as.numeric(df$FLAG_OWN_CAR)
+df$FLAG_OWN_REALTY <- as.numeric(df$FLAG_OWN_REALTY)
+df$NAME_TYPE_SUITE <- as.numeric(df$NAME_TYPE_SUITE)
+df$NAME_INCOME_TYPE <- as.numeric(df$NAME_INCOME_TYPE)
+df$NAME_EDUCATION_TYPE <- as.numeric(df$NAME_EDUCATION_TYPE)
+df$NAME_FAMILY_STATUS <- as.numeric(df$NAME_FAMILY_STATUS)
+df$NAME_HOUSING_TYPE <- as.numeric(df$NAME_HOUSING_TYPE)
+df$OCCUPATION_TYPE <- as.numeric(df$OCCUPATION_TYPE)
+df$ORGANIZATION_TYPE <- as.numeric(df$ORGANIZATION_TYPE)
+df$FONDKAPREMONT_MODE <- as.numeric(df$FONDKAPREMONT_MODE)
+df$HOUSETYPE_MODE <- as.numeric(df$HOUSETYPE_MODE)
+df$WALLSMATERIAL_MODE <- as.numeric(df$WALLSMATERIAL_MODE)
+df$EMERGENCYSTATE_MODE <- as.numeric(df$EMERGENCYSTATE_MODE)
+```
+
+```{r}
+inTrain <- createDataPartition(df$TARGET, p=0.8, list=FALSE)
+
+df_train <- df[inTrain, ]
+df_test <- df[-inTrain, ]
+
+x_train <- df_train[, -which(names(df_train) == "TARGET")]
+y_train <- df_train$TARGET
+x_test <- df_test[, -which(names(df_test) == "TARGET")]
+y_test <- df_test$TARGET
+
+
+```
+
+
+```{r}
+train_data <- lgb.Dataset(data = as.matrix(x_train), label = y_train)
+fit <- lightgbm(
+  data = train_data
+  , params = list(
+    num_leaves = 4L
+    , learning_rate = 1.0
+    , objective = "binary"
+  )
+  , nrounds = 10L
+  , verbose = -1L
+)
+```
+
+```{r}
+train_preds <- predict(fit, as.matrix(x_train))
+test_preds <- predict(fit, as.matrix(x_test))
+
+train_preds_binary <- ifelse(train_preds > 0.5, 1, 0)
+test_preds_binary <- ifelse(test_preds > 0.5, 1, 0)
+
+train_conf_mat <- confusionMatrix(factor(train_preds_binary), factor(y_train))
+test_conf_mat <- confusionMatrix(factor(test_preds_binary), factor(y_test))
+```
+
+```{r}
+print(train_conf_mat)
+print(test_conf_mat)
+```
+
+```{r}
+train_precision <- train_conf_mat$byClass["Neg Pred Value"]
+train_recall <- train_conf_mat$byClass["Sensitivity"]
+train_f1 <- 2 * (train_precision * train_recall) / (train_precision + train_recall)
+
+test_precision <- test_conf_mat$byClass["Pos Pred Value"]
+test_recall <- test_conf_mat$byClass["Sensitivity"]
+test_f1 <- 2 * (test_precision * test_recall) / (test_precision + test_recall)
+
+train_metrics <- data.frame(Precision = train_precision, Recall = train_recall, F1 = train_f1)
+test_metrics <- data.frame(Precision = test_precision, Recall = test_recall, F1 = test_f1)
+
+print("Training Metrics:")
+print(train_metrics)
+
+print("Test Metrics:")
+print(test_metrics)
+```
+
+### The results of LightGBM on the HomeCredit data show a slightly increased accuracy compared to a majority-based classifier.  Precision and F1 are outperformed by other models in this project.  However, like the Naive Bayes model, this model seems to perform well in identifying default instances (the minority class).

@@ -1,0 +1,131 @@
+---
+title: "HomeCredit Naive Bayes"
+author: "Chris Joyce"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: false
+    toc: true
+    toc_depth: 2
+editor_options:
+  chunk_output_type: inline
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+library(readxl)
+library(tidyverse)
+library(C50)
+library(caret)
+library(rminer)
+library(knitr)
+library(rpart)
+library(rpart.plot)
+library(e1071)
+library(ggplot2)
+library(kernlab)
+library(matrixStats)
+library(RWeka)
+library(psych)
+library(randomForest)
+library(xgboost)
+library(pROC)
+library(Matrix)
+library(dplyr)
+```
+
+
+```{r}
+set.seed(22)
+inTrain <- createDataPartition(df$TARGET, p=0.7, list=FALSE)
+
+df_train <- df[inTrain,]
+df_test <- df[-inTrain,]
+```
+
+# Naive Bayes
+
+```{r}
+# Default model
+
+nb_df <- naiveBayes(TARGET ~ .,data = df_train)
+```
+
+```{r}
+nb_df_train_predictions <- predict(nb_df,df_train)
+nb_df_test_predictions <- predict(nb_df,df_test)
+```
+
+```{r}
+mmetric(df_train$TARGET, nb_df_train_predictions, metric=c("ACC","F1","TPR", "PRECISION"))
+mmetric(df_test$TARGET, nb_df_test_predictions, metric=c("ACC","F1","TPR", "PRECISION"))
+```
+
+```{r}
+# Adjusted model after removing document variables
+
+nb_df2 <- naiveBayes(TARGET ~ EXT_SOURCE_3 + AMT_REQ_CREDIT_BUREAU_MON + AMT_REQ_CREDIT_BUREAU_QRT + AMT_REQ_CREDIT_BUREAU_YEAR + OBS_30_CNT_SOCIAL_CIRCLE + DEF_30_CNT_SOCIAL_CIRCLE + DEF_60_CNT_SOCIAL_CIRCLE + EXT_SOURCE_2 + AMT_ANNUITY + CNT_FAM_MEMBERS + DAYS_LAST_PHONE_CHANGE + NAME_CONTRACT_TYPE + CODE_GENDER + FLAG_OWN_CAR + FLAG_OWN_REALTY + AMT_CREDIT + NAME_TYPE_SUITE + NAME_INCOME_TYPE + NAME_EDUCATION_TYPE + NAME_FAMILY_STATUS + NAME_HOUSING_TYPE + REGION_POPULATION_RELATIVE + DAYS_BIRTH + DAYS_ID_PUBLISH + FLAG_EMP_PHONE + FLAG_WORK_PHONE + FLAG_PHONE + OCCUPATION_TYPE + REGION_RATING_CLIENT + REGION_RATING_CLIENT_W_CITY + HOUR_APPR_PROCESS_START + REG_REGION_NOT_LIVE_REGION + REG_REGION_NOT_WORK_REGION + REG_CITY_NOT_LIVE_CITY + REG_CITY_NOT_WORK_CITY + LIVE_CITY_NOT_WORK_CITY + ORGANIZATION_TYPE + FONDKAPREMONT_MODE + HOUSETYPE_MODE + WALLSMATERIAL_MODE + EMERGENCYSTATE_MODE, data = df_train)
+```
+
+```{r}
+nb_df2_train_predictions <- predict(nb_df2,df_train)
+nb_df2_test_predictions <- predict(nb_df2,df_test)
+```
+
+```{r}
+mmetric(df_train$TARGET, nb_df2_train_predictions, metric=c("ACC","F1","TPR"))
+mmetric(df_test$TARGET, nb_df2_test_predictions, metric=c("ACC","F1","TPR"))
+```
+
+### Two different Naive Bayes models are used for the Home Credit data.  The first utilizes all available predictor variables, and results in an accuracy of 65%.  The second uses all predictor variables except for document variables, and results in an accuracy of 82%, which still underperforms the majority based classifier. For both target variable classes, the precision and F1 metrics underperform those observed from the other models.  However, we can see that the recall for the minority class outperforms those used in the other project models, implying this Naive Bayes model is particularly good at identifying which customers are likely to default.
+
+
+# Cross Validation
+
+```{r}
+cv_function <- function(df, target, nFolds, seedVal, classification, metrics_list)
+{
+
+  set.seed(seedVal)
+  folds = createFolds(df[,target],nFolds)
+  # folds
+ 
+ cv_results <- lapply(folds, function(x)
+ { 
+   train <- df[-x,-target]
+   test  <- df[x,-target]
+   
+   train_target <- df[-x,target]
+   test_target <- df[x,target]
+   
+   classification_model <- classification(train,train_target) 
+   
+   pred <- predict(classification_model,test)
+   
+   return(mmetric(test_target,pred,metrics_list))
+ })
+ 
+ cv_results_m <- as.matrix(as.data.frame(cv_results))
+
+ cv_mean<- as.matrix(rowMeans(cv_results_m))
+ 
+ colnames(cv_mean) <- "Mean"
+ 
+ cv_sd <- as.matrix(rowSds(cv_results_m))
+ 
+ colnames(cv_sd) <- "Sd"
+ 
+ cv_all <- cbind(cv_results_m, cv_mean, cv_sd)
+ 
+ kable(cv_all,digits=2)
+}
+```
+
+```{r}
+metrics_list <- c("ACC","F1","TPR")
+
+cv_function(metrics_list =  metrics_list, df = df_train, target = 12, nFolds = 5, seed = 22, classification =  naiveBayes)
+cv_function(metrics_list =  metrics_list, df = df_train, target = 12, nFolds = 10, seed = 22, classification =  naiveBayes)
+```
